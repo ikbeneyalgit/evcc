@@ -27,6 +27,17 @@ params:
       de: "Kann im VRM Portal oder im RemoteUI ausgelesen werden."
       en: "Can be read out in VRM portal or via remoteUI."
   - preset: battery-params
+  - name: griddischarge
+    type: bool
+    default: false
+    usages: ["battery"]
+    advanced: true
+    description:
+      de: Netzentladen
+      en: Discharge to grid
+    help:
+      de: Erlaubt die aktive Entladung der Batterie ins Netz über den ESS-Netzsollwert. Dynamic ESS muss deaktiviert sein.
+      en: Allows actively discharging the battery to the grid via ESS grid setpoint. Dynamic ESS must be disabled.
 render: |
   type: custom
   {{- if eq .usage "grid" }}
@@ -185,5 +196,76 @@ render: |
         type: writesingle
         decode: uint16
       scale: 10
+  {{- if .griddischarge }}
+  # only discharge sets the grid setpoint override (2716), all other modes release it
+  # so ESS falls back to the grid setpoint configured on the GX (2700)
+  batterymode:
+    source: switch
+    switch:
+    - case: 1 # normal
+      set:
+        source: const
+        value: 0 # release override
+        set:
+          source: modbus
+          {{- include "modbus-connection" . | indent 8 }}
+          id: 100 # com.victronenergy.hub4
+          register:
+            address: 2716 # grid setpoint override (volatile)
+            type: writemultiple
+            encoding: int32
+    - case: 2 # hold
+      set:
+        source: const
+        value: 0 # release override
+        set:
+          source: modbus
+          {{- include "modbus-connection" . | indent 8 }}
+          id: 100 # com.victronenergy.hub4
+          register:
+            address: 2716 # grid setpoint override (volatile)
+            type: writemultiple
+            encoding: int32
+    - case: 3 # charge
+      set:
+        source: const
+        value: 0 # release override
+        set:
+          source: modbus
+          {{- include "modbus-connection" . | indent 8 }}
+          id: 100 # com.victronenergy.hub4
+          register:
+            address: 2716 # grid setpoint override (volatile)
+            type: writemultiple
+            encoding: int32
+    - case: 5 # discharge
+      set:
+        source: sequence
+        set:
+        # limitsoc is not applied for discharge, a preceding hold or charge would block discharging
+        - source: const
+          value: {{ .minsoc }}
+          set:
+            source: modbus
+            {{- include "modbus-connection" . | indent 10 }}
+            id: 100 # com.victronenergy.settings
+            register:
+              address: 2901 # limit soc
+              type: writesingle
+              decode: uint16
+            scale: 10
+        - source: const
+          # grid export target, the battery covers export plus house load. Without maxdischargepower
+          # the export is capped by the GX feed-in and discharge limits and the inverter rating
+          value: {{ if .maxdischargepower }}-{{ .maxdischargepower }}{{ else }}-100000{{ end }}
+          set:
+            source: modbus
+            {{- include "modbus-connection" . | indent 10 }}
+            id: 100 # com.victronenergy.hub4
+            register:
+              address: 2716 # grid setpoint override (volatile)
+              type: writemultiple
+              encoding: int32
+  {{- end }}
   {{- include "battery-params" . }}
   {{- end }}
