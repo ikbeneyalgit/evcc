@@ -76,7 +76,10 @@ func (t *Tibber) run(done chan error) {
 		"id": graphql.ID(t.homeID),
 	}
 
-	for tick := time.Tick(time.Hour); ; <-tick {
+	var wait time.Duration
+	for ; ; time.Sleep(wait) {
+		wait = time.Hour
+
 		var res struct {
 			Viewer struct {
 				Home struct {
@@ -105,7 +108,18 @@ func (t *Tibber) run(done chan error) {
 
 		mergeRates(t.data, data)
 		once.Do(func() { close(done) })
+
+		wait = tibberPollInterval(time.Now(), len(pi.Tomorrow) > 0)
 	}
+}
+
+// tibberPollInterval returns the wait until the next price update. Tomorrow's prices are
+// published in the early afternoon, so poll more often from noon until they arrive.
+func tibberPollInterval(now time.Time, tomorrow bool) time.Duration {
+	if !tomorrow && now.Hour() >= 12 {
+		return 5 * time.Minute
+	}
+	return time.Hour
 }
 
 func (t *Tibber) rates(pi []tibber.Price) api.Rates {
